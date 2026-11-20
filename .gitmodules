@@ -1,0 +1,3 @@
+[submodule "upstream-lark-flow-bridge"]
+	path = upstream-lark-flow-bridge
+	url = https://github.com/geekyshubham/lark-flow-bridge.git
