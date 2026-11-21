@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 
@@ -19,21 +20,39 @@ namespace LarkCodex {
             var wrong=Report(0);wrong[4]=0x40;Check(Protocol.Status(wrong)==null,"wrong response destination ignored");
             wrong=Report(0);wrong[0]=0x41;Check(Protocol.Status(wrong)==null,"unrelated report ignored");
             Check(Protocol.Status(Report(4))==null,"unsupported noise setting ignored");
+            var mute=Report(0);mute[22]=1;Check(Protocol.Status(mute).AllMuted,"hardware mute reported for the active transmitter");
             var offline=Report(0);offline[7]=0;Check(!Protocol.Status(offline).Connected,"offline transmitter parsed");
             var request=Protocol.Request(0x19,new byte[]{2},64);Check(request.Length==64&&request[0]==0x55&&request[3]==0x19&&request[6]==1&&request[7]==2,"Windows output has one report ID and correct payload");
+            Check(!PressTiming.IsDouble(10,10.59),"no-go interval rejects rapid worktree double press");
+            Check(PressTiming.IsDouble(10,10.6),"green interval accepts lower boundary");
+            Check(PressTiming.IsDouble(10,12.2),"green interval accepts upper boundary");
+            Check(!PressTiming.IsDouble(10,12.21),"second press expires after deadline");
             int clicks=0,writes=0;byte original=255;
             var detector=new ButtonDetector((a,b)=>{writes++;original=b;},()=>clicks++);
             detector.Update(State(0),0);detector.Update(State(3),0.3);detector.Update(State(3),1.1);
             Check(clicks==0&&writes==0&&detector.Baseline==3,"startup transitions establish baseline without a click");
             detector.Update(State(0),1.2);Check(clicks==0&&writes==1&&original==3,"noise change requests restoration, not a premature shortcut");
             detector.Update(State(3),1.4);detector.Update(State(3),1.5);Check(clicks==1&&!detector.Pending,"only confirmed restoration emits one click");
-            detector.Update(State(0),1.6);Check(writes==1,"debounce suppresses rapid duplicate transition");
+            detector.Update(State(0),1.45);Check(writes==1,"debounce suppresses rapid duplicate transition");
             detector.Update(State(3),1.8);Check(clicks==1,"restoration reports do not retrigger");
             detector.Reset();detector.Update(State(0),10);detector.Update(State(0),11.1);detector.Update(State(2),11.2);detector.Update(State(2),11.9);detector.Update(State(2),12.5);detector.Update(State(2),13.1);
             Check(detector.Paused&&!detector.Pending&&clicks==1&&detector.Attempts==3,"failed restoration pauses after three attempts without clicking");
             detector=new ButtonDetector((a,b)=>{},()=>clicks++);detector.Update(State(0),0);detector.Update(State(0),1.1);detector.Update(State(1),1.2);detector.CancelClick();detector.Update(State(0),1.4);
             Check(clicks==1,"pause/shutdown can finish restoration without an action");
             detector.Update(new ReceiverStatus{Connected=false},2);detector.Update(State(2),3);Check(detector.Baseline==2&&!detector.Pending&&clicks==1,"reconnect resets pending actions and noise baseline");
+            detector.Update(new ReceiverStatus{Connected=true,AllMuted=true,Noise=1},4);
+            Check(clicks==1&&!detector.Baseline.HasValue,"firmware mute gesture never starts dictation");
+            Check(PressTiming.IsDouble(11.1,12.1)&&PressTiming.IsDouble(11.1,13.1)&&!PressTiming.IsDouble(11.1,13.4),"1 to 2 second gaps fit the wider gesture window");
+            string managed=@"C:\Lark\worktree-branch-1-12345678";
+            Check(WorktreeDialog.CanConfirm("Trust this folder?",managed,new[]{managed}),"only the pending worktree prompt can be confirmed");
+            Check(!WorktreeDialog.CanConfirm("Trust this folder?",managed,new[]{@"C:\Lark\different-folder"}),"an unrelated trust prompt is left alone");
+            Check(!WorktreeDialog.CanConfirm("Trust these folders?",managed,new[]{managed,@"C:\Lark\different-folder"}),"a batch trust prompt is left alone");
+            Check(!WorktreeDialog.CanConfirm("This folder is marked untrusted",managed,new[]{managed}),"an explicit untrusted dialog is left alone");
+            var saved=new[]{new LocalProject {Folder=managed,Name="worktree-branch-1-12345678"}};
+            Check(ProjectChoices.ResolveUniqueFolder("worktree-branch-1-12345678",saved,managed)==managed,"a blank worktree chat resolves its folder without the clipboard");
+            var duplicate=new LocalProject {Folder=@"D:\Another checkout",Name="worktree-branch-1-12345678"};
+            Check(ProjectChoices.ResolveUniqueFolder("worktree-branch-1-12345678",saved.Concat(new[]{duplicate}),managed)==null,"an ambiguous project label never picks a folder");
+            Check(GitWorktrees.NextBranch("main\nbranch-1\nbranch-3\nbranch-test")=="branch-4","numbered branches skip existing names");
             Func<string,string,bool,bool,bool,bool,bool,bool,string,string,bool> can=SendPolicy.CanSend;
             Check(can("chatA","chatA",true,false,false,false,true,true,"","recognized words"),"finished nonempty transcript in same chat can send");
             Check(!can("chatA","chatB",true,false,false,false,true,true,"","recognized words"),"chat switch prevents send");
@@ -46,6 +65,64 @@ namespace LarkCodex {
             Check(!can("chatA","chatA",true,false,false,false,true,true,"existing draft","existing draft"),"unchanged preexisting draft prevents send");
             Check(!can("chatA","chatA",true,false,false,false,false,true,"","recognized words"),"Codex must return to idle dictation before send");
             Console.WriteLine("All "+count+" checks passed; no hardware, keyboard or message actions.");return 0;
+        }
+    }
+
+    internal static class WorktreeTests {
+        internal static int Run(string executable) {
+            string fixture=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"worktree-test-"+Guid.NewGuid().ToString("N").Substring(0,8));
+            string source=Path.Combine(fixture,"Fixture repository");
+            string worktrees=Path.Combine(fixture,"worktrees");
+            string home=Path.Combine(fixture,"config");
+            Directory.CreateDirectory(source);Directory.CreateDirectory(home);
+            Func<bool> running=()=>false;
+            GitWorktrees.Git(source,running,"init","--initial-branch=main");
+            File.WriteAllText(Path.Combine(source,"tracked.txt"),"committed");
+            GitWorktrees.Git(source,running,"add","tracked.txt");
+            GitWorktrees.Git(source,running,"-c","user.name=LARK test","-c","user.email=lark@example.invalid","commit","-m","Fixture");
+            var config=Path.Combine(home,"config.toml");
+            File.WriteAllText(config,"[projects.'"+source.ToLowerInvariant()+"']\ntrust_level = \"trusted\"\n");
+            File.WriteAllText(Path.Combine(source,"tracked.txt"),"uncommitted");
+            WorktreeTarget first,second;
+            string projectId;
+            using(var codex=new CodexProjectClient(executable,home,running)) {
+                string projectFolder=Path.Combine(source,"Project subfolder");
+                Directory.CreateDirectory(projectFolder);
+                codex.Call("project/create",new { idempotencyKey="primary", name="Other checkout", roots=new[] { new { path=source } } });
+                var created=codex.Call("project/create",new { idempotencyKey="project", name="Fixture", roots=new[] { new { path=projectFolder } } });
+                projectId=(string)((System.Collections.Generic.Dictionary<string,object>)created["project"])["id"];
+                string primary=GitWorktrees.PrimaryCheckout(source,running);
+                if(codex.ResolveProject(projectFolder,source,primary,worktrees).Id!=projectId)
+                    throw new Exception("The selected project did not resolve by its folder");
+                first=GitWorktrees.Create(source,primary,worktrees,running,codex.RequireTrustedSource);
+                codex.Register(first,worktrees);
+                codex.RequireTrustedSource(first.Path);
+                codex.CreateEmptyChat(first,projectId,worktrees);
+                if(GitWorktrees.PrimaryCheckout(first.Path,running)!=primary || codex.ResolveProject(first.Path,first.Path,primary,worktrees).Id!=projectId)
+                    throw new Exception("The generated worktree lost the parent project");
+                second=GitWorktrees.Create(first.Path,primary,worktrees,running,codex.RequireTrustedSource);
+                codex.Register(second,worktrees);
+                codex.RequireTrustedSource(second.Path);
+                codex.CreateEmptyChat(second,projectId,worktrees);
+                if(first.Branch!="branch-1" || second.Branch!="branch-2" || first.Path==second.Path)
+                    throw new Exception("Numbered worktrees were not unique");
+                if(File.ReadAllText(Path.Combine(second.Path,"tracked.txt"))!="committed" ||
+                   File.ReadAllText(Path.Combine(source,"tracked.txt"))!="uncommitted" ||
+                   GitWorktrees.Git(source,running,"branch","--show-current")!="main")
+                    throw new Exception("The source checkout or its uncommitted edit was changed");
+                if(first.ChatId==second.ChatId || !second.MatchesChatLink(second.Link) || second.MatchesChatLink(first.Link))
+                    throw new Exception("The links did not address unique saved chats");
+                var outside=new WorktreeTarget {Path=source,Source=source,Branch="main"};
+                bool blocked=false;
+                try {codex.Register(outside,worktrees);} catch(IOException) {blocked=true;}
+                if(!blocked) throw new Exception("Path outside the generated worktree directory was accepted");
+            }
+            using(var codex=new CodexProjectClient(executable,home,running)) {
+                codex.VerifyEmptyChat(first,projectId);
+                codex.VerifyEmptyChat(second,projectId);
+            }
+            Console.WriteLine("PASS two distinct numbered worktrees, verified trust, and two durable empty chats under the same Codex project.");
+            return 0;
         }
     }
     internal static class HardwareTests {

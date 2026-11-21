@@ -92,11 +92,11 @@ namespace LarkCodex {
         private readonly Action<byte[]> receive;
         private volatile bool disposed;
         internal Exception ReadError;
-        internal HidConnection(HidNative.DeviceInfo info, Action<byte[]> callback) {
+        internal HidConnection(HidNative.DeviceInfo info, Action<byte[]> callback, bool readOnly=false) {
             receive=callback; outputLength=info.Caps.OutputLength; input=new byte[info.Caps.InputLength];
-            handle=HidNative.CreateFile(info.Path,0xc0000000,3,IntPtr.Zero,3,0x40000000,IntPtr.Zero);
+            handle=HidNative.CreateFile(info.Path,readOnly ? 0x80000000 : 0xc0000000,3,IntPtr.Zero,3,0x40000000,IntPtr.Zero);
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(),"Cannot open the LARK control interface");
-            stream=new FileStream(handle,FileAccess.ReadWrite,info.Caps.InputLength,true);
+            stream=new FileStream(handle,readOnly ? FileAccess.Read : FileAccess.ReadWrite,info.Caps.InputLength,true);
             ReadNext();
         }
         private void ReadNext() {
@@ -130,7 +130,7 @@ namespace LarkCodex {
         public void Dispose() { disposed=true; HidNative.CancelIoEx(handle,IntPtr.Zero); stream.Dispose(); handle.Dispose(); }
     }
 
-    internal sealed class ReceiverStatus { internal bool Connected; internal byte Noise; internal bool Muted; }
+    internal sealed class ReceiverStatus { internal bool Connected; internal byte Noise; internal bool Muted,AllMuted; }
     internal static class Protocol {
         internal static byte[] Request(byte command, byte[] payload, int length) {
             if(length<7+payload.Length) throw new ArgumentException("HID report too short");
@@ -146,7 +146,9 @@ namespace LarkCodex {
         }
         internal static ReceiverStatus Status(byte[] report) {
             var p=Payload(report,0x10,16); if(p==null || p[6]>3) return null;
-            return new ReceiverStatus {Connected=p[0]==1 || p[1]==1,Noise=p[6],Muted=(p[0]==1 && (p[15]&1)!=0) || (p[1]==1 && (p[15]&2)!=0)};
+            int connected=(p[0]==1?1:0)|(p[1]==1?2:0);
+            int muted=p[15]&connected;
+            return new ReceiverStatus {Connected=connected!=0,Noise=p[6],Muted=muted!=0,AllMuted=connected!=0&&muted==connected};
         }
     }
 }

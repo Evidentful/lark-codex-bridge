@@ -5,6 +5,72 @@ using System.Windows.Automation;
 
 namespace LarkCodex {
     internal static class Diagnostics {
+        internal static int TraceGestures() {
+            var clock=System.Diagnostics.Stopwatch.StartNew();
+            var devices=HidNative.Enumerate();
+            var control=devices.SingleOrDefault(x=>x.Report55);
+            if(control==null) throw new Exception("Connect one LARK A2 receiver.");
+            var extra=new System.Collections.Generic.List<HidConnection>();
+            int vibeReplies=0;
+            int readyReports=0;
+            string lastStatus=null;
+            try {
+                foreach(var device in devices.Where(x=>!x.Report55&&x.Caps.InputLength>0)) {
+                    ushort page=device.Caps.UsagePage;
+                    try {
+                        extra.Add(new HidConnection(device,report=>Console.WriteLine("{0:F3} HID {1:x4}: {2}",clock.Elapsed.TotalSeconds,page,BitConverter.ToString(report)),true));
+                        Console.WriteLine("Listening on LARK HID usage page 0x{0:x4}",page);
+                    } catch(System.ComponentModel.Win32Exception) {Console.WriteLine("Cannot listen on LARK HID usage page 0x{0:x4}",page);}
+                }
+                using(var receiver=new HidConnection(control,report=>{
+                    if(Protocol.Payload(report,0x43,4)!=null) {Interlocked.Increment(ref vibeReplies);Console.WriteLine("Firmware responded to VIBE_TEMPLATE_GET.");}
+                    var state=Protocol.Status(report);
+                    if(state==null) return;
+                    Interlocked.Increment(ref readyReports);
+                    string summary=string.Format("paired={0} noise={1} muted={2}",state.Connected,state.Noise,state.Muted);
+                    if(summary!=lastStatus) {lastStatus=summary;Console.WriteLine("{0:F3} {1}",clock.Elapsed.TotalSeconds,summary);}
+                })) {
+                    int remapQueries=0;
+                    Console.WriteLine("LARK gesture capture ready for 70 seconds.");
+                    while(clock.Elapsed.TotalSeconds<70) {
+                        if(remapQueries<3 && clock.Elapsed.TotalSeconds>=remapQueries) {
+                            receiver.Send(0x43);
+                            remapQueries++;
+                        }
+                        receiver.Send(0x10);
+                        Thread.Sleep(75);
+                    }
+                }
+                Console.WriteLine("Status replies: {0}. Firmware remap read replies: {1}.",readyReports,vibeReplies);
+                return readyReports>0 ? 0 : 2;
+            } finally {foreach(var device in extra) device.Dispose();}
+        }
+        internal static int WorkspaceView(string folder) {
+            foreach(var p in System.Diagnostics.Process.GetProcessesByName("ChatGPT")) {
+                if(p.MainWindowHandle==IntPtr.Zero || !DesktopNative.IsCodex(p.MainWindowHandle)) continue;
+                var root=AutomationElement.FromHandle(p.MainWindowHandle);
+                var doc=root.FindFirst(TreeScope.Descendants,new PropertyCondition(AutomationElement.AutomationIdProperty,"RootWebArea"));
+                if(doc==null) continue;
+                Console.WriteLine("Document: "+doc.Current.Name);
+                foreach(AutomationElement node in doc.FindAll(TreeScope.Descendants,Condition.TrueCondition)) {
+                    var info=node.Current;
+                    string name=info.Name;
+                    if(info.IsOffscreen || string.IsNullOrEmpty(name)) continue;
+                    string help=info.HelpText??"";
+                    if(info.ControlType==ControlType.Edit || name.IndexOf(folder,StringComparison.OrdinalIgnoreCase)>=0 || help.IndexOf(folder,StringComparison.OrdinalIgnoreCase)>=0 ||
+                       name=="Dictate" || name=="Work with Codex" || name=="Chat toolbar" || name=="Local" ||
+                       name.StartsWith("Change project: ",StringComparison.Ordinal) || name=="Trust folder")
+                        Console.WriteLine("{0}: {1} [{2}] {3}",info.ControlType.ProgrammaticName,name,info.AutomationId,help);
+                }
+                var view=CodexView.Read(p.MainWindowHandle);
+                if(view!=null) {
+                    Console.WriteLine("Composer available; new={0}; project={1}; draft length={2}",view.NewComposer,view.ProjectLabel,view.Draft.Length);
+                    if(view.NewComposer) Console.WriteLine("Resolved project folder: "+(ProjectChoices.ResolveBlankComposer(view.ProjectLabel)??"(unknown)"));
+                }
+                return 0;
+            }
+            return 2;
+        }
         internal static int CancelRecording() {
             foreach(var p in System.Diagnostics.Process.GetProcessesByName("ChatGPT")) {
                 if(p.MainWindowHandle==IntPtr.Zero || !DesktopNative.IsCodex(p.MainWindowHandle)) continue;
@@ -108,11 +174,36 @@ namespace LarkCodex {
         [STAThread] internal static int Main(string[] args) {
             try {
                 if(args.Contains("--probe")) return Diagnostics.Probe();
+                if(args.Contains("--trace-gestures")) return Diagnostics.TraceGestures();
                 if(args.Contains("--inspect")) {Diagnostics.Inspect();return 0;}
                 if(args.Contains("--record-test")) return Diagnostics.RecordTest();
                 if(args.Contains("--cancel")) return Diagnostics.CancelRecording();
                 if(args.Contains("--view")) return Diagnostics.View();
+                if(args.Length==2&&args[0]=="--workspace-view") return Diagnostics.WorkspaceView(args[1]);
+                if(args.Length==2&&args[0]=="--worktree-test") return WorktreeTests.Run(args[1]);
+                if(args.Contains("--current-folder")) {
+                    var window=DesktopNative.GetForegroundWindow();
+                    if(!DesktopNative.IsCodex(window)) {Console.WriteLine("Codex is not foreground.");return 2;}
+                    var view=CodexView.Read(window);
+                    var folder=view==null ? null : CurrentChatFolder.Read(view,()=>false);
+                    Console.WriteLine(folder??"Codex did not return a working directory.");
+                    return folder==null?2:0;
+                }
                 if(args.Contains("--draft-test")) return Diagnostics.DraftTest();
+                if(args.Contains("--layout-test")) {
+                    using(var form=new BridgeWindow(false)) {
+                        foreach(var size in new[]{new System.Drawing.Size(480,580),new System.Drawing.Size(850,800)}) {
+                            form.Size=size;form.Show();System.Windows.Forms.Application.DoEvents();form.PerformLayout();
+                            using(var bitmap=new System.Drawing.Bitmap(form.Width,form.Height)) {
+                                form.DrawToBitmap(bitmap,new System.Drawing.Rectangle(0,0,bitmap.Width,bitmap.Height));
+                                bitmap.Save(System.IO.Path.Combine(Environment.CurrentDirectory,"layout-"+size.Width+".png"));
+                            }
+                            if(form.FormBorderStyle!=System.Windows.Forms.FormBorderStyle.Sizable) throw new Exception("Window cannot resize");
+                            Console.WriteLine("PASS layout "+size.Width+" x "+size.Height);
+                        }
+                    }
+                    return 0;
+                }
                 if(args.Contains("--test")) return Tests.Run();
                 if(args.Contains("--hardware-test")) return HardwareTests.Run();
                 if(args.Contains("--window-test")) return WindowTests.Run();

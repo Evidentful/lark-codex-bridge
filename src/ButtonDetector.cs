@@ -19,10 +19,13 @@ namespace LarkCodex {
         internal void CancelClick() {allowClick=false;}
         internal void Update(ReceiverStatus state,double now) {
             if(!state.Connected) {Reset();return;}
+            if(state.AllMuted) {
+                Reset();Status="Mic muted. Double-tap quickly to unmute, then space worktree presses 1 second apart.";return;
+            }
             if(!Baseline.HasValue) {Baseline=state.Noise;settleUntil=now+1;Status="Settling receiver";return;}
             if(Pending) {
                 if(state.Noise==Baseline.Value) {
-                    Pending=false;suppressUntil=now+0.35;
+                    Pending=false;suppressUntil=now+0.09;
                     bool emit=allowClick&&!Paused;allowClick=false;Status=Paused?"Paused":"Ready";
                     if(emit) click();return;
                 }
@@ -100,7 +103,7 @@ namespace LarkCodex {
                             }
                             if(connection.ReadError!=null) throw new System.IO.IOException("Receiver disconnected",connection.ReadError);
                             if(now-lastStatus>2) throw new System.IO.IOException("Receiver status timed out");
-                            if(now>=nextPoll) {connection.Send(0x10);nextPoll=now+0.2;}
+                            if(now>=nextPoll) {connection.Send(0x10);nextPoll=now+0.075;}
                             Thread.Sleep(15);
                         }
                     }
