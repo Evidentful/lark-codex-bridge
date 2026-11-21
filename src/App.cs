@@ -107,7 +107,7 @@ namespace LarkCodex {
             }
             countdownText=new Label {AutoSize=true,Dock=DockStyle.Top,Text="Countdown appears after a LARK press"};
             countdown=new CountdownBar {Height=22,Dock=DockStyle.Top};
-            var timingBox=new GroupBox {Text="Durations (seconds) — session settings; change while stopped",Dock=DockStyle.Top,Height=225};
+            var timingBox=new GroupBox {Text="Durations (seconds) - session settings; change while stopped",Dock=DockStyle.Top,Height=225};
             timingPanel=new FlowLayoutPanel {Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true};
             timingBox.Controls.Add(timingPanel);
             AddTiming("Second-press window",PressTiming.DoubleClickSeconds,0.8,10,v=>PressTiming.DoubleClickSeconds=v);
@@ -190,7 +190,7 @@ namespace LarkCodex {
             controller=new DictationController(s=>Post(current,delegate {dictationStatus=s;UpdateStatus();}),selectedProject,allowWorktrees.Checked);
             timingPanel.Enabled=false;
             controller.Countdown=(label,left,total,red)=>Post(current,delegate {
-                countdownText.Text=label+" — "+left.ToString("F2")+" s";
+                countdownText.Text=label+" - "+left.ToString("F2")+" s";
                 countdown.Fraction=total>0?Math.Min(1,left/total):0;countdown.Red=red;countdown.Invalidate();
                 if(label!="Ready" && DesktopNative.IsCodex(DesktopNative.GetForegroundWindow())) RevealWithoutFocus();
                 else if(label=="Ready") TopMost=false;
