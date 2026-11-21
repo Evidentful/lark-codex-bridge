@@ -56,7 +56,7 @@ The upstream reference is tracked as a Git submodule pinned to that commit. Afte
 
 ## Window and duration controls
 
-Drag a window edge to resize, maximize it, or scroll at its minimum size. The helper uses a flow layout rather than fixed control coordinates. During a gesture it is raised without activating the window, so Codex keeps keyboard focus. Clicking the helper manually still changes focus and cancels pending automatic sending.
+The helper starts in a larger, wider window. Drag an edge to resize or maximize it: editable timing settings and fixed references occupy two side-by-side panels that expand with the available width. Labels wrap instead of clipping. Smaller screens can scroll the whole page; neither timing panel has a nested scrollbar. All timing values and the countdown use seconds with three decimal places. Click **Reset defaults** while stopped to restore all seven editable durations. During a gesture it is raised without activating the window, so Codex keeps keyboard focus. Clicking the helper manually still changes focus and cancels pending automatic sending.
 
 The countdown fill shrinks from right to left. With worktrees enabled, the first detected press begins a red 0.60-second no-go interval, followed by a green interval until the second-press deadline (default 2.20 seconds after the first detected press). Red is a conservative spacing guide, not a measured or configurable LARK firmware double-tap threshold. A fast physical double-tap may mute the transmitter before the helper receives any usable press. Press during green to request a worktree; let green expire for dictation in the current chat. When worktrees are disabled there is no second-press selection interval.
 

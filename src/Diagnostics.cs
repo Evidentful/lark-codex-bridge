@@ -5,6 +5,12 @@ using System.Windows.Automation;
 
 namespace LarkCodex {
     internal static class Diagnostics {
+        internal static System.Collections.Generic.IEnumerable<System.Windows.Forms.Control> Descendants(System.Windows.Forms.Control parent) {
+            foreach(System.Windows.Forms.Control child in parent.Controls) {
+                yield return child;
+                foreach(var descendant in Descendants(child)) yield return descendant;
+            }
+        }
         internal static int TraceGestures() {
             var clock=System.Diagnostics.Stopwatch.StartNew();
             var devices=HidNative.Enumerate();
@@ -192,14 +198,21 @@ namespace LarkCodex {
                 if(args.Contains("--draft-test")) return Diagnostics.DraftTest();
                 if(args.Contains("--layout-test")) {
                     using(var form=new BridgeWindow(false)) {
-                        foreach(var size in new[]{new System.Drawing.Size(480,580),new System.Drawing.Size(850,800)}) {
+                        foreach(var size in new[]{new System.Drawing.Size(1770,1275),new System.Drawing.Size(2000,1450)}) {
                             form.Size=size;form.Show();System.Windows.Forms.Application.DoEvents();form.PerformLayout();
                             using(var bitmap=new System.Drawing.Bitmap(form.Width,form.Height)) {
                                 form.DrawToBitmap(bitmap,new System.Drawing.Rectangle(0,0,bitmap.Width,bitmap.Height));
                                 bitmap.Save(System.IO.Path.Combine(Environment.CurrentDirectory,"layout-"+size.Width+".png"));
                             }
                             if(form.FormBorderStyle!=System.Windows.Forms.FormBorderStyle.Sizable) throw new Exception("Window cannot resize");
-                            Console.WriteLine("PASS layout "+size.Width+" x "+size.Height);
+                            var inputs=Diagnostics.Descendants(form).OfType<System.Windows.Forms.NumericUpDown>().ToArray();
+                            if(inputs.Length!=7 || inputs.Any(input=>input.DecimalPlaces!=3)) throw new Exception("Timing inputs missing or inconsistent units");
+                            var original=inputs[0].Value;inputs[0].Value=original+0.1M;
+                            var reset=Diagnostics.Descendants(form).OfType<System.Windows.Forms.Button>().Single(button=>button.Text=="Reset defaults");
+                            reset.PerformClick();
+                            if(inputs[0].Value!=original || PressTiming.DoubleClickSeconds!=(double)original) throw new Exception("Reset did not restore timing defaults");
+                            foreach(var input in inputs) if(input.Width<100) throw new Exception("Timing input too narrow");
+                            Console.WriteLine("PASS layout, consistent seconds and reset "+size.Width+" x "+size.Height);
                         }
                     }
                     return 0;

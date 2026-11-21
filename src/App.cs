@@ -4,6 +4,7 @@ using System.Threading;
 using System.Windows.Forms;
 using System.Drawing;
 using System.Linq;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace LarkCodex {
@@ -50,7 +51,10 @@ namespace LarkCodex {
         private readonly Label statusLabel,hint;
         private readonly ComboBox projectPicker;
         private readonly CheckBox allowWorktrees;
-        private FlowLayoutPanel timingPanel;
+        private TableLayoutPanel timingPanel;
+        private Button resetButton;
+        private TableLayoutPanel referencePanel;
+        private readonly List<Action> resetTimings=new List<Action>();
         private CountdownBar countdown;
         private Label countdownText;
         [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window,IntPtr after,int x,int y,int cx,int cy,uint flags);
@@ -68,8 +72,8 @@ namespace LarkCodex {
             Font=new Font("Segoe UI",9F);
             AutoScaleMode=AutoScaleMode.Dpi;
             AutoScaleDimensions=new SizeF(96F,96F);
-            ClientSize=new Size(580,680);
-            MinimumSize=new Size(480,580);
+            ClientSize=new Size(1180,850);
+            MinimumSize=new Size(1020,680);
             FormBorderStyle=FormBorderStyle.Sizable;
             MaximizeBox=true;MinimizeBox=true;
             StartPosition=FormStartPosition.CenterScreen;
@@ -96,19 +100,30 @@ namespace LarkCodex {
                 Location=new Point(14,206),Size=new Size(316,50),ForeColor=SystemColors.GrayText
             };
             UpdateGestureHint();
-            Controls.AddRange(new Control[]{title,startButton,stopButton,projectLabel,projectPicker,allowWorktrees,statusLabel,hint});
-            var layout=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=1,RowCount=11,Padding=new Padding(14),AutoScroll=true};
+            var scroll=new Panel {Dock=DockStyle.Fill,AutoScroll=true,Padding=new Padding(20)};
+            var layout=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,Padding=new Padding(0)};
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-            foreach(Control control in new Control[]{title,startButton,stopButton,projectLabel,projectPicker,allowWorktrees,statusLabel,hint}) {
-                Controls.Remove(control);control.Dock=DockStyle.Top;control.Margin=new Padding(0,4,0,4);
-                if(control==statusLabel) {control.Height=56;statusLabel.AutoEllipsis=false;}
-                if(control==hint) control.Height=64;
-                layout.Controls.Add(control);
-            }
-            countdownText=new Label {AutoSize=true,Dock=DockStyle.Top,Text="Countdown appears after a LARK press"};
-            countdown=new CountdownBar {Height=22,Dock=DockStyle.Top};
-            var timingBox=new GroupBox {Text="Durations (seconds) - session settings; change while stopped",Dock=DockStyle.Top,Height=225};
-            timingPanel=new FlowLayoutPanel {Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true};
+            Action<Control> add=delegate(Control control) {
+                int row=layout.RowCount++;
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                control.Dock=DockStyle.Fill;control.Margin=new Padding(0,3,0,3);
+                layout.Controls.Add(control,0,row);
+            };
+            title.Font=new Font(Font.FontFamily,14F,FontStyle.Bold);add(title);
+            var buttons=new TableLayoutPanel {AutoSize=true,ColumnCount=2};
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            foreach(var button in new[]{startButton,stopButton}) {button.Dock=DockStyle.Fill;button.AutoSize=true;button.MinimumSize=new Size(0,30);}
+            buttons.Controls.Add(startButton,0,0);buttons.Controls.Add(stopButton,1,0);add(buttons);
+            add(projectLabel);add(projectPicker);add(allowWorktrees);
+            statusLabel.AutoSize=true;statusLabel.AutoEllipsis=false;add(statusLabel);
+            hint.AutoSize=true;add(hint);
+            countdownText=new Label {AutoSize=true,Text="Countdown appears after a LARK press (seconds)"};
+            countdown=new CountdownBar {Height=24,MinimumSize=new Size(0,24)};
+            add(countdownText);add(countdown);
+            var timingBox=new GroupBox {Text="Timing settings - all values in seconds",AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(14,24,14,14)};
+            timingPanel=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=2};
+            timingPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,75));
+            timingPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,25));
             timingBox.Controls.Add(timingPanel);
             AddTiming("Second-press window",PressTiming.DoubleClickSeconds,0.8,10,v=>PressTiming.DoubleClickSeconds=v);
             AddTiming("Dictation startup / Shift release",Timing.Startup,1,60,v=>Timing.Startup=v);
@@ -117,11 +132,46 @@ namespace LarkCodex {
             AddTiming("Send confirmation",Timing.Submission,1,60,v=>Timing.Submission=v);
             AddTiming("Worktree open timeout",Timing.Worktree,5,300,v=>Timing.Worktree=v);
             AddTiming("Worktree focus grace",Timing.Focus,1,60,v=>Timing.Focus=v);
-            timingPanel.Controls.Add(new Label {AutoSize=true,MaximumSize=new Size(390,0),Text="Fixed reference: 0.60 s no-go spacing (conservative guidance; firmware threshold unknown)."});
-            timingPanel.Controls.Add(new Label {AutoSize=true,MaximumSize=new Size(390,0),Text="Receiver: settle 1 s; debounce 0.09 s; restore retry 0.6 / 0.5 s (3 attempts)."});
-            timingPanel.Controls.Add(new Label {AutoSize=true,MaximumSize=new Size(390,0),Text="Receiver: poll 0.075 s; reconnect 1 s; status timeout 2 s; shutdown restore 2 s."});
-            layout.Controls.Add(countdownText);layout.Controls.Add(countdown);layout.Controls.Add(timingBox);
-            Controls.Add(layout);
+            var referenceBox=new GroupBox {Text="Fixed timing references (seconds)",AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new Padding(14,24,14,14),Dock=DockStyle.Top};
+            referencePanel=new TableLayoutPanel {Dock=DockStyle.Top,AutoSize=true,ColumnCount=2};
+            referencePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,78));referencePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,22));
+            referenceBox.Controls.Add(referencePanel);
+            AddReference("No-go spacing (fixed guidance; firmware threshold unknown)",PressTiming.NoGoSeconds);
+            AddReference("Receiver startup settling",1);
+            AddReference("Receiver debounce",0.09);
+            AddReference("Initial restoration retry",0.6);
+            AddReference("Subsequent restoration retry",0.5);
+            AddReference("Receiver poll interval",0.075);
+            AddReference("Receiver reconnect delay",1);
+            AddReference("Receiver status timeout",2);
+            AddReference("Shutdown restoration allowance",2);
+            AddReference("Noise command spacing",0.08);
+            AddReference("Receiver loop interval",0.015);
+            resetButton=new Button {Text="Reset defaults",AutoSize=true,MinimumSize=new Size(150,34),AccessibleName="Reset timing defaults"};
+            resetButton.Click+=delegate {foreach(var resetTiming in resetTimings) resetTiming();};
+            int resetRow=timingPanel.RowCount++;
+            timingPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            timingPanel.Controls.Add(resetButton,0,resetRow);
+            timingPanel.SetColumnSpan(resetButton,2);
+            var cards=new TableLayoutPanel {AutoSize=true,ColumnCount=2};
+            cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,55));cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,45));
+            timingBox.Dock=DockStyle.Top;timingBox.Margin=new Padding(0,0,12,0);
+            cards.Controls.Add(timingBox,0,0);cards.Controls.Add(referenceBox,1,0);add(cards);
+            Action wrapRows=delegate {
+                foreach(var table in new[]{timingPanel,referencePanel}) {
+                    int available=Math.Max(120,(int)(table.ClientSize.Width*(table==timingPanel?0.75:0.78))-20);
+                    foreach(Control child in table.Controls) if(child is Label && table.GetColumn(child)==0) child.MaximumSize=new Size(available,0);
+                }
+            };
+            timingPanel.SizeChanged+=delegate {wrapRows();};referencePanel.SizeChanged+=delegate {wrapRows();};
+            add(new Label {AutoSize=true,Text="Change settings while stopped. Values last for this session. Fixed receiver timings are reference only; restoration makes up to 3 attempts.",ForeColor=SystemColors.GrayText});
+            scroll.Controls.Add(layout);Controls.Add(scroll);
+            // Wrapped labels follow available width, including after a DPI-scaled resize.
+            layout.SizeChanged+=delegate {
+                hint.MaximumSize=new Size(Math.Max(1,layout.ClientSize.Width-10),0);
+                statusLabel.MaximumSize=hint.MaximumSize;
+                foreach(Control child in layout.Controls) if(child is Label) child.MaximumSize=hint.MaximumSize;
+            };
             startButton.Click+=delegate {StartBridge();};stopButton.Click+=delegate {StopBridge();};
             stop=new EventWaitHandle(false,EventResetMode.ManualReset,AppSignals.StopName);stop.Reset();
             show=new EventWaitHandle(false,EventResetMode.AutoReset,AppSignals.ShowName);
@@ -136,11 +186,19 @@ namespace LarkCodex {
             FormClosed+=delegate {stop.Dispose();show.Dispose();timer.Dispose();};
         }
         private void AddTiming(string name,double value,double min,double max,Action<double> change) {
-            var row=new FlowLayoutPanel {Width=400,Height=28,WrapContents=false};
-            row.Controls.Add(new Label {Text=name,Width=280,Height=24});
-            var input=new NumericUpDown {Minimum=(decimal)min,Maximum=(decimal)max,DecimalPlaces=2,Increment=0.1M,Value=(decimal)value,Width=85,AccessibleName=name};
+            int row=timingPanel.RowCount++;
+            timingPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            timingPanel.Controls.Add(new Label {Text=name,AutoSize=true,Anchor=AnchorStyles.Left,Margin=new Padding(0,8,12,8)},0,row);
+            var input=new NumericUpDown {Minimum=(decimal)min,Maximum=(decimal)max,DecimalPlaces=3,Increment=0.1M,Value=(decimal)value,Dock=DockStyle.Fill,Margin=new Padding(0,3,0,3),AccessibleName=name+" (seconds)",ThousandsSeparator=false};
             input.ValueChanged+=delegate {change((double)input.Value);};
-            row.Controls.Add(input);timingPanel.Controls.Add(row);
+            resetTimings.Add(delegate {input.Value=(decimal)value;});
+            timingPanel.Controls.Add(input,1,row);
+        }
+        private void AddReference(string name,double seconds) {
+            int row=referencePanel.RowCount++;
+            referencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            referencePanel.Controls.Add(new Label {Text=name,AutoSize=true,Anchor=AnchorStyles.Left,Margin=new Padding(0,4,12,4)},0,row);
+            referencePanel.Controls.Add(new Label {Text=seconds.ToString("F3"),AutoSize=true,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,Margin=new Padding(3,4,0,4)},1,row);
         }
         private void ConfigureWorktreeTrust(object sender,EventArgs args) {
             bool enabled=allowWorktrees.Checked;
@@ -190,7 +248,7 @@ namespace LarkCodex {
             controller=new DictationController(s=>Post(current,delegate {dictationStatus=s;UpdateStatus();}),selectedProject,allowWorktrees.Checked);
             timingPanel.Enabled=false;
             controller.Countdown=(label,left,total,red)=>Post(current,delegate {
-                countdownText.Text=label+" - "+left.ToString("F2")+" s";
+                countdownText.Text=label+" - "+left.ToString("F3")+" s";
                 countdown.Fraction=total>0?Math.Min(1,left/total):0;countdown.Red=red;countdown.Invalidate();
                 if(label!="Ready" && DesktopNative.IsCodex(DesktopNative.GetForegroundWindow())) RevealWithoutFocus();
                 else if(label=="Ready") TopMost=false;
